@@ -1,0 +1,72 @@
+#!/usr/bin/env ruby
+
+def step(title, command)
+  echo :title, "\n\n#{title}"
+  echo :subtitle, "#{command}\n"
+
+  report(title) { system command }
+end
+
+def report(title)
+  Signal.trap("INT") { abort message(:error, "\n\n❌ #{title} interrupted") }
+
+  result = nil
+  elapsed = timing { result = yield }
+
+  if result
+    echo :success, "\n\n✅ #{title} passed in #{elapsed}"
+    true
+  else
+    echo :error, "\n\n❌ #{title} failed in #{elapsed}"
+    false
+  end
+ensure
+  Signal.trap("INT", "-")
+end
+
+def timing
+  started_at = Time.now.to_f
+  yield
+  min, sec = (Time.now.to_f - started_at).divmod(60)
+  "#{"#{min}m" if min > 0}%.2fs" % sec
+end
+
+def echo(...) = puts message(...)
+def message(type, text) = "#{COLORS[type]}#{text}\033[0m"
+
+COLORS = {
+  banner: "\033[1;32m",   # Green
+  title: "\033[1;35m",    # Purple
+  subtitle: "\033[1;90m", # Medium Gray
+  error: "\033[1;31m",    # Red
+  success: "\033[1;32m"   # Green
+}
+
+
+echo :banner, "🚀 Local CI"
+echo :subtitle, "Running tests, style checks, and security audits"
+
+report "Local CI" do
+  step "Setup", "bin/setup"
+
+<% unless options.skip_rubocop? -%>
+  step "Style: Ruby", "bin/rubocop"
+<% end -%>
+<% unless options.skip_docker? -%>
+  step "Style: Dockerfile", "docker run --rm -i -v #{ENV['PWD']}/.hadolint.yaml:/hadolint.yaml -v #{ENV['PWD']}/Dockerfile:/Dockerfile hadolint/hadolint hadolint --config /hadolint.yaml /Dockerfile"
+<% end -%>
+
+<% unless options.skip_brakeman? -%>
+  step "Security: Brakeman code analysis", "bin/brakeman --quiet --no-pager --exit-on-warn --exit-on-error"
+<% end -%>
+<% if using_node? -%>
+  step "Security: Yarn vulnerability audit", "yarn audit"
+<% end -%>
+
+  step "Tests: Rails", "bin/rails test"
+  step "Tests: Seeds", "env RAILS_ENV=test bin/rails db:seed:replant"
+
+  # Optional: set a green GitHub commit status to unblock PR merge.
+  # Requires the `gh` CLI and and `gh extension install basecamp/gh-signoff`.
+  # step "Signoff: All systems go. Ready for merge and deploy.", "gh signoff"
+end
